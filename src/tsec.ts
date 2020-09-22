@@ -19,6 +19,7 @@ import * as ts from 'typescript';
 import {ENABLED_RULES} from './rule_groups';
 import {ExemptionList, parseConformanceExemptionConfig} from './tsec_lib/exemption_config';
 import {ExtendedParsedCommandLine, parseTsConfigFile} from './tsec_lib/tsconfig';
+import * as fs from 'fs';
 
 const FORMAT_DIAGNOSTIC_HOST: ts.FormatDiagnosticsHost = {
   getCurrentDirectory: ts.sys.getCurrentDirectory,
@@ -55,6 +56,22 @@ function reportDiagnosticsWithSummary(diagnostics: readonly ts.Diagnostic[]):
   return errorCount;
 }
 
+function reportDiagnosticsAsJson(diagnostics: readonly ts.Diagnostic[]): string {
+  let report = new Map<string, Array<string>>();
+  diagnostics.forEach((d)=> {
+    if (d.start && d.file) {
+      const line = d.file.getLineAndCharacterOfPosition(d.start);
+      const lines = d.file.text.split('\n');
+      const location = `${d.file.fileName}:${line.line + 1}:${line.character + 1}`;
+      if (!report.has(location)) {
+        report = report.set(location, []);
+      }
+      report.get(location)?.push(lines[line.line].trim());
+    }
+  });
+  return JSON.stringify(Array.from(report.entries()));
+}
+
 function getTsConfigFilePath(projectPath?: string): string {
   let tsConfigFilePath: string;
 
@@ -76,6 +93,11 @@ function getTsConfigFilePath(projectPath?: string): string {
  * and emits code for files without conformance violations.
  */
 function main(args: string[]) {
+  let outFile;
+  if (args.includes('--json')) {
+    [, outFile] = args.splice(args.findIndex(v => v === ' --json') - 1, 2);
+    console.log(args);
+  }
   let parsedConfig: ExtendedParsedCommandLine = ts.parseCommandLine(args);
   if (parsedConfig.errors.length !== 0) {
     // Same as tsc, do not emit colorful diagnostic texts for command line
@@ -167,6 +189,9 @@ function main(args: string[]) {
   diagnostics.push(...result.diagnostics);
 
   const errorCount = reportDiagnosticsWithSummary(diagnostics);
+  if (outFile) {
+    fs.writeFileSync(outFile, reportDiagnosticsAsJson(diagnostics));
+  }
 
   return errorCount === 0 ? 0 : 1;
 }
